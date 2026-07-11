@@ -1,0 +1,112 @@
+name: run-improvement
+description: >
+  Drain the approved to-do queue in priority order via work-one-todo (each
+  task built by one agent and reviewed by another), then review the running
+  application against Plan.md's success criteria and write report.md into
+  the braindump folder.
+timeout: 7200
+max_concurrency: 1
+
+inputs:
+  project_root: "Absolute path to the repo holding .atelier/project/ with approved tasks in 01_to-do/."
+  braindump_dir: "Absolute path to the braindump folder holding Plan.md; report.md is written here."
+
+tasks:
+  - todo_guard:
+      description: Check prerequisites and whether 01_to-do has any approved tasks.
+      tool: tool:bash
+      depends_on: []
+      task: |
+        set -euo pipefail
+        root="{{inputs.project_root}}"
+        d="{{inputs.braindump_dir}}"
+        for p in "$root" "$d"; do
+          case "$p" in
+            /*) ;;
+            *) echo "inputs must be absolute paths, got: $p" >&2; exit 1 ;;
+          esac
+        done
+        if [ ! -f "$root/.atelier/project/project.md" ]; then
+          echo "no scaffolded project at $root/.atelier/project - run implement-autonomous-projects first" >&2
+          exit 1
+        fi
+        if [ ! -f "$d/Plan.md" ]; then
+          echo "no Plan.md in $d - run plan-autonomous-projects first" >&2
+          exit 1
+        fi
+        counter="{{conduit_dir}}/../autonomous-projects/scripts/count_tasks.py"
+        if [ ! -f "$counter" ]; then
+          echo "autonomous-projects package not installed (missing $counter) - run: atelier add LGuillermoAngaritaG/autonomous-projects" >&2
+          exit 1
+        fi
+        out=$(python3 "$counter" "$root/.atelier/project/01_to-do")
+        echo "$out"
+        if echo "$out" | grep -Eq 'task_counter:\s*0\b'; then
+          echo "01_to-do is empty. Move approved cards from 00_backlog/ into 01_to-do/ - the move is the approval."
+          echo "todo_empty: yes"
+        else
+          echo "todo_empty: no"
+        fi
+
+  - drain:
+      description: Work every approved to-do task in priority order until the queue is empty.
+      tool: tool:conduit
+      task: work-one-todo
+      depends_on:
+        - todo_guard.output.match(todo_empty:\s*no)
+      repeat: 50
+      until: 'output.match(task_counter:\s*0)'
+      inputs:
+        project_document: "{{inputs.project_root}}/.atelier/project/project.md"
+        project_dir: "{{inputs.project_root}}/.atelier/project"
+        project_root: "{{inputs.project_root}}"
+        target: "50"
+        prior: "{{loop.previous}}"
+
+  - review_app:
+      description: Run the application against Plan.md success criteria and write report.md.
+      tool: harness:claude-code
+      depends_on: [drain]
+      retries: 2
+      retry_backoff: 5
+      task: |
+        /review-application {{inputs.project_root}} {{inputs.braindump_dir}}/Plan.md
+
+        Write the report to {{inputs.braindump_dir}}/report.md.
+
+  - summary_done:
+      description: Point the human at the report and the board state.
+      tool: tool:bash
+      depends_on: [review_app]
+      task: |
+        set -euo pipefail
+        d="{{inputs.braindump_dir}}"
+        proj="{{inputs.project_root}}/.atelier/project"
+        echo "report: $d/report.md"
+        grep -E '^\*\*Verdict' "$d/report.md" || true
+        for stage in 03_to-review 04_done 05_blocked; do
+          if [ -d "$proj/$stage" ]; then
+            n=$(find "$proj/$stage" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')
+          else
+            n=0
+          fi
+          echo "$stage: $n"
+        done
+        echo "review the report and the 03_to-review/ tasks - moving them to 04_done/ is yours to do."
+        echo "run_phase: complete"
+
+  # Complementary sink: fires exactly when drain/review were skipped because
+  # the queue was empty, so exactly one summary always runs.
+  - summary_empty:
+      description: Explain that nothing ran because 01_to-do was empty.
+      tool: tool:bash
+      depends_on:
+        - todo_guard.output.match(todo_empty:\s*yes)
+      task: |
+        set -euo pipefail
+        backlog="{{inputs.project_root}}/.atelier/project/00_backlog"
+        echo "nothing to run - 01_to-do is empty; no report generated."
+        echo "candidate cards waiting in 00_backlog:"
+        ls "$backlog" 2>/dev/null || true
+        echo "move the ones you approve into 01_to-do/ and run this conduit again."
+        echo "run_phase: skipped_empty_queue"

@@ -1,0 +1,12 @@
+name: project-pipeline
+version: 1
+conduits:
+  - plan-autonomous-projects
+  - implement-autonomous-projects
+  - run-improvement
+  - implementation-conduit
+skills:
+  - plan-doc
+  - process-diagram
+  - architecture-diagram
+  - review-application

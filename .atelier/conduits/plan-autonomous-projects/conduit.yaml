@@ -1,0 +1,109 @@
+name: plan-autonomous-projects
+description: >
+  Turn a braindump folder (transcript, sketches, context) into Plan.md plus,
+  when the plan calls for them, process.excalidraw and architecture.drawio -
+  all written back into the same folder.
+timeout: 7200
+max_concurrency: 1
+
+inputs:
+  braindump_dir: "Absolute path to the braindump folder (transcript, sketches, context.md); Plan.md and diagrams are written here."
+
+tasks:
+  - guard:
+      description: Fail fast on a bad braindump folder or missing tooling.
+      tool: tool:bash
+      depends_on: []
+      task: |
+        set -euo pipefail
+        d="{{inputs.braindump_dir}}"
+        case "$d" in
+          /*) ;;
+          *) echo "braindump_dir must be an absolute path, got: $d" >&2; exit 1 ;;
+        esac
+        if [ ! -d "$d" ]; then
+          echo "braindump_dir does not exist: $d" >&2; exit 1
+        fi
+        missing=()
+        for c in claude python3 curl; do
+          command -v "$c" >/dev/null 2>&1 || missing+=("$c")
+        done
+        if [ "${#missing[@]}" -gt 0 ]; then
+          echo "missing dependency: ${missing[*]} (claude for the harness, curl for the excalidraw plugin export)" >&2
+          exit 1
+        fi
+        if ! command -v draw.io >/dev/null 2>&1 && ! command -v drawio >/dev/null 2>&1 \
+           && [ ! -x "/Applications/draw.io.app/Contents/MacOS/draw.io" ]; then
+          echo "warning: draw.io desktop CLI not found - architecture diagrams will be written but not exported to PNG (brew install --cask drawio)"
+        fi
+        content=$(find "$d" -maxdepth 1 -type f \
+          \( -iname 'transcript*' -o -name '*.md' -o -name '*.txt' \
+             -o -name '*.excalidraw' -o -name '*.drawio' -o -name '*.png' \
+             -o -name '*.jpg' \) ! -name 'Plan.md' ! -name 'report.md' | sort)
+        if [ -z "$content" ]; then
+          echo "no braindump content found in $d - drop at least a transcript*.md/.txt, a sketch, or a context.md there first" >&2
+          exit 1
+        fi
+        echo "inputs found:"
+        echo "$content"
+        echo "guard: ok"
+
+  - plan:
+      description: Write Plan.md from the braindump via the plan-doc skill.
+      tool: harness:claude-code
+      depends_on: [guard]
+      retries: 2
+      retry_backoff: 5
+      task: |
+        /plan-doc {{inputs.braindump_dir}}
+
+        Reminder about your final output: a conduit gates the diagram steps
+        on it. End with the plan-doc output contract lines exactly once -
+        including the needs_process and needs_architecture decision lines -
+        and never restate their line formats or possible values anywhere
+        else in your response.
+
+  - process_diagram:
+      description: Create process.excalidraw when the plan says a process flow is needed.
+      tool: harness:claude-code
+      depends_on:
+        - plan.output.match(needs_process:\s*yes\b)
+      retries: 2
+      retry_backoff: 5
+      task: |
+        /process-diagram {{inputs.braindump_dir}}
+
+  - architecture_diagram:
+      description: Create architecture.drawio when the plan says an architecture view is needed.
+      tool: harness:claude-code
+      depends_on:
+        - plan.output.match(needs_architecture:\s*yes\b)
+      retries: 2
+      retry_backoff: 5
+      task: |
+        /architecture-diagram {{inputs.braindump_dir}}
+
+  # Depends only on plan so it is never cascade-skipped when a diagram task
+  # skips; declared last so under max_concurrency 1 it runs after both
+  # diagram tasks have run or resolved to skip. Informational only - nothing
+  # downstream gates on it.
+  - summary:
+      description: List the produced planning artifacts for the human reviewer.
+      tool: tool:bash
+      depends_on: [plan]
+      task: |
+        set -euo pipefail
+        d="{{inputs.braindump_dir}}"
+        echo "artifacts in $d:"
+        ls -la "$d"
+        echo "---"
+        grep -E '^needs_' "$d/Plan.md" || true
+        for f in process.excalidraw architecture.drawio; do
+          if [ -f "$d/$f" ]; then
+            echo "$f: present"
+          else
+            echo "$f: absent"
+          fi
+        done
+        echo "review Plan.md and the diagrams, edit them freely, then continue with implement-autonomous-projects"
+        echo "plan_phase: complete"

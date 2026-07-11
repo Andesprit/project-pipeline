@@ -1,0 +1,108 @@
+name: implementation-conduit
+description: >
+  The full pipeline: braindump folder in, reviewed working application out.
+  Chains plan-autonomous-projects, implement-autonomous-projects and
+  run-improvement with a human approval gate after the plan and after task
+  generation. Answering anything but yes at a gate stops the pipeline
+  cleanly.
+timeout: 7200
+max_concurrency: 1
+
+inputs:
+  braindump_dir: "Absolute path to the braindump folder (transcript, sketches, context); all planning artifacts and the final report land here."
+  project_root: "Absolute path to the target repo; created and scaffolded if missing."
+
+tasks:
+  - plan_phase:
+      description: Braindump to Plan.md plus conditional diagrams.
+      tool: tool:conduit
+      task: plan-autonomous-projects
+      depends_on: []
+      inputs:
+        braindump_dir: "{{inputs.braindump_dir}}"
+
+  # Distinct input keys per gate (plan_confirm vs tasks_confirm): HITL
+  # answers become top-level flow inputs and would overwrite each other
+  # under a shared name.
+  - hitl_plan:
+      description: Human gate - review the plan before tasks are generated.
+      tool: tool:hitl
+      depends_on: [plan_phase]
+      task: |
+        Review the planning artifacts in {{inputs.braindump_dir}}:
+        Plan.md, and process.excalidraw / architecture.drawio if the plan
+        called for them. Edit them freely - the next phase reads them from
+        disk, so your edits are what gets implemented.
+      inputs:
+        plan_confirm: "Type 'yes' to proceed to task generation; anything else stops the pipeline"
+        plan_reason: "Short reason for the decision (audit trail)"
+
+  - implement_phase:
+      description: Plan.md to a prioritized, spec'd backlog.
+      tool: tool:conduit
+      task: implement-autonomous-projects
+      depends_on:
+        - hitl_plan.output.match(plan_confirm:\s*["']?yes)
+      inputs:
+        braindump_dir: "{{inputs.braindump_dir}}"
+        project_root: "{{inputs.project_root}}"
+
+  - hitl_tasks:
+      description: Human gate - approve tasks by moving them to the work queue.
+      tool: tool:hitl
+      depends_on: [implement_phase]
+      task: |
+        Review the generated cards in
+        {{inputs.project_root}}/.atelier/project/00_backlog/.
+        MOVE the tasks you approve into ../01_to-do/ - the move IS the
+        approval; anything left in 00_backlog will not be worked. Adjust the
+        priority: front-matter if you disagree with the ordering (lower runs
+        sooner).
+      inputs:
+        tasks_confirm: "Type 'yes' when the 01_to-do queue is ready to run; anything else stops the pipeline"
+        tasks_reason: "Short reason for the decision (audit trail)"
+
+  - run_phase:
+      description: Drain the approved queue and review the application.
+      tool: tool:conduit
+      task: run-improvement
+      depends_on:
+        - hitl_tasks.output.match(tasks_confirm:\s*["']?yes)
+      inputs:
+        project_root: "{{inputs.project_root}}"
+        braindump_dir: "{{inputs.braindump_dir}}"
+
+  # Complementary sinks: exactly one runs. hitl tasks do not hold the
+  # concurrency slot (engine runs them outside the semaphore), so a sink
+  # that only depended on plan_phase would execute while a gate is still
+  # waiting for the human. Gating each sink on the actual outcome instead
+  # means it is evaluated only once that outcome exists.
+  - summary_complete:
+      description: Full pipeline finished - point at the report.
+      tool: tool:bash
+      depends_on: [run_phase]
+      task: |
+        set -euo pipefail
+        echo "report at {{inputs.braindump_dir}}/report.md (if the queue was empty, see the run_phase output above)"
+        echo "pipeline: complete"
+
+  - summary_stopped_plan:
+      description: Human declined the plan gate.
+      tool: tool:bash
+      depends_on:
+        - hitl_plan.output.not_match(plan_confirm:\s*["']?yes)
+      task: |
+        set -euo pipefail
+        echo "stopped at the plan gate. Edit {{inputs.braindump_dir}}/Plan.md (or redo the braindump) and rerun."
+        echo "pipeline: stopped_at_plan_gate"
+
+  - summary_stopped_tasks:
+      description: Human declined the task gate.
+      tool: tool:bash
+      depends_on:
+        - hitl_tasks.output.not_match(tasks_confirm:\s*["']?yes)
+      task: |
+        set -euo pipefail
+        echo "stopped at the task gate. Cards remain in {{inputs.project_root}}/.atelier/project/00_backlog/."
+        echo "edit or move them to 01_to-do/, then run: atelier run run-improvement --input project_root={{inputs.project_root}} --input braindump_dir={{inputs.braindump_dir}}"
+        echo "pipeline: stopped_at_task_gate"

@@ -1,0 +1,165 @@
+name: implement-autonomous-projects
+description: >
+  Turn a reviewed Plan.md into an autonomous-projects work queue: scaffold
+  .atelier/project/ in the target repo, seed project.md, write one raw task
+  per workstream, expand them into specs via improve-all-tasks, then set
+  priorities to match the plan's workstream order.
+timeout: 7200
+max_concurrency: 1
+
+inputs:
+  braindump_dir: "Absolute path to the braindump folder holding the reviewed Plan.md."
+  project_root: "Absolute path to the target repo; created, git-initialized and scaffolded if missing."
+
+tasks:
+  - ensure_project:
+      description: Create/scaffold the target repo and verify prerequisites.
+      tool: tool:bash
+      depends_on: []
+      task: |
+        set -euo pipefail
+        d="{{inputs.braindump_dir}}"
+        root="{{inputs.project_root}}"
+        for p in "$d" "$root"; do
+          case "$p" in
+            /*) ;;
+            *) echo "inputs must be absolute paths, got: $p" >&2; exit 1 ;;
+          esac
+        done
+        if [ ! -f "$d/Plan.md" ]; then
+          echo "no Plan.md in $d - run plan-autonomous-projects first" >&2; exit 1
+        fi
+        scaffolder="{{conduit_dir}}/../autonomous-projects/scripts/new_project.py"
+        if [ ! -f "$scaffolder" ]; then
+          echo "autonomous-projects package not installed (missing $scaffolder) - run: atelier add LGuillermoAngaritaG/autonomous-projects" >&2
+          exit 1
+        fi
+        mkdir -p "$root"
+        if ! git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+          git -C "$root" init
+        fi
+        if [ ! -d "$root/.atelier/project" ]; then
+          python3 "$scaffolder" --repo "$root"
+        else
+          echo "existing project found at $root/.atelier/project - reusing it"
+        fi
+        echo "project: ready"
+
+  - seed_project_md:
+      description: Write project.md (Goal/Description/Constraints) from Plan.md.
+      tool: harness:claude-code
+      depends_on: [ensure_project]
+      retries: 2
+      retry_backoff: 5
+      task: |
+        Read {{inputs.braindump_dir}}/Plan.md and overwrite
+        {{inputs.project_root}}/.atelier/project/project.md with a project
+        document derived from it. Keep the existing template shape exactly:
+        YAML front-matter containing ONLY test_command, then the H1 sections
+        # Goal, # Description, # Constraints.
+
+        - test_command: the project's full test command if the plan or the
+          repo implies one (for example "uv run pytest" or "npm test"),
+          otherwise the empty string "".
+        - # Goal: from the plan's Objective & Vision - what done looks like.
+        - # Description: from Proposed Solution plus Scope/In. High level
+          components only, no endpoint lists.
+        - # Constraints: from Scope/Out (things the bot must NOT build) plus
+          any binding constraints implied by Risks & Open Questions.
+
+        These constraints are treated as binding house rules by the builder
+        and reviewer agents, so keep them short and unambiguous.
+
+        End your response with exactly:
+        project_md: written
+
+  - generate_tasks:
+      description: Write one raw task file per plan workstream into 00_tasks/.
+      tool: harness:claude-code
+      depends_on: [seed_project_md]
+      retries: 2
+      retry_backoff: 5
+      task: |
+        Read {{inputs.braindump_dir}}/Plan.md, section
+        "# Workstreams & Priorities" (an ordered list of M workstreams).
+        For each workstream N (in order), write ONE raw markdown task file at
+        {{inputs.project_root}}/.atelier/project/00_tasks/ named
+        01_<slug>.md, 02_<slug>.md, ... (two-digit zero-padded N, short
+        kebab-case slug). The improver drains this folder in filename order,
+        so the numbering preserves workstream order.
+
+        Each file is plain markdown, NO front-matter, under 40 lines:
+
+        # <Workstream N title from Plan.md>
+
+        <2-6 sentences: what this workstream delivers, distilled from the
+        plan - objective, the components it touches, constraints that bind
+        it.>
+
+        Context:
+        - Plan: {{inputs.braindump_dir}}/Plan.md (read it before speccing)
+        - This is workstream N of M ("<title>"). Scaffolding-first ordering.
+
+        Acceptance:
+        - <bullets derived from the Plan.md Success Criteria this workstream
+          serves>
+
+        The line "This is workstream N of M" must appear verbatim in every
+        file - a later step recovers task priority from it after the
+        improver rewrites filenames.
+
+        End your response with the list of files written and then exactly:
+        tasks_written: <number of files>
+
+  - improve_all:
+      description: Expand the raw tasks into spec'd backlog cards via improve-all-tasks.
+      tool: tool:conduit
+      task: improve-all-tasks
+      depends_on: [generate_tasks]
+      inputs:
+        project_document: "{{inputs.project_root}}/.atelier/project/project.md"
+        template_dir: "{{conduit_dir}}/../autonomous-projects/references"
+        path_task: "{{inputs.project_root}}/.atelier/project/00_tasks"
+        path_backlog: "{{inputs.project_root}}/.atelier/project/00_backlog"
+        target: "50"
+
+  - prioritize:
+      description: Restore plan workstream order onto the generated backlog cards.
+      tool: harness:claude-code
+      depends_on: [improve_all]
+      retries: 2
+      retry_backoff: 5
+      task: |
+        The task improver at
+        {{inputs.project_root}}/.atelier/project/00_backlog/ sets
+        priority: 1 on every card it writes, losing the plan's workstream
+        order. Restore it:
+
+        1. List every task_*.md in that folder.
+        2. In each card's "# Description" section, find the verbatim line
+           "This is workstream N of M" and set the card's front-matter
+           priority: to that N (integer; lower runs sooner).
+        3. If the line is missing, match the Description against the
+           workstream titles in {{inputs.braindump_dir}}/Plan.md; if still
+           ambiguous, set priority to M+1 so it runs last but never blocks
+           the ordered work.
+        4. Edit ONLY the priority: front-matter line of each file - every
+           other byte stays untouched.
+
+        End your response with a "filename -> priority" line per card and
+        then exactly:
+        prioritized: <number of cards>
+
+  - summary:
+      description: Show the prioritized backlog and the next human step.
+      tool: tool:bash
+      depends_on: [prioritize]
+      task: |
+        set -euo pipefail
+        backlog="{{inputs.project_root}}/.atelier/project/00_backlog"
+        echo "backlog cards and priorities:"
+        grep -H '^priority:' "$backlog"/task_*.md || echo "no cards found in $backlog"
+        echo "---"
+        echo "review the cards, then MOVE the ones you approve into 01_to-do/ - the move is the approval."
+        echo "then run: atelier run run-improvement --input project_root={{inputs.project_root}} --input braindump_dir={{inputs.braindump_dir}}"
+        echo "implement_phase: complete"
