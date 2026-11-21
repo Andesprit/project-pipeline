@@ -33,8 +33,9 @@ grounded as this folder.
 ## 2. Decide the project_root
 
 - **New project**: pass a path that does not exist yet, for example
-  `~/projects/<name>`. It is created, `git init`-ed, and scaffolded. The
-  plan's first workstream (scaffolding) builds the skeleton.
+  `~/projects/<name>`. The pipeline creates the repo and its project board.
+  Include application setup in the first working path. Give the scaffold its
+  own card only if the plan names someone who can use it independently.
 - **Existing repo**: the pipeline edits it IN PLACE and commits per task.
   For anything you care about, point `project_root` at a fresh clone or a
   dedicated branch checkout (`git worktree add` works well), review the
@@ -71,10 +72,13 @@ or died.
 
 The run pauses with a `plan_confirm` prompt. Before typing anything:
 
-1. Open `<braindump_dir>/Plan.md`. Check, in order: Scope/Out (is anything
-   listed there that you actually want? anything missing that you do NOT
-   want built?), Workstreams (right slices, right order, scaffolding first),
-   Success Criteria (would you sign off on the app if exactly these hold?).
+1. Open `<braindump_dir>/Plan.md`. Check that Scope/Out reflects what you
+   want to exclude. Read the workstreams in priority order. Each should
+   describe one independently usable result that one agent can deliver and
+   a reviewer can check. Each additional workstream should explain why it
+   needs fresh context, parallel work, an independent test or review, or a
+   different agent or permissions. Check that the Success Criteria would
+   let you sign off on the application.
 2. Glance at `process.png` / `architecture.drawio.png` - they exist to make
    this review fast.
 3. Statements marked "Assumption:" are the model filling gaps - veto or

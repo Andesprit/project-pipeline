@@ -74,7 +74,7 @@ tasks:
         project_md: written
 
   - generate_tasks:
-      description: Write one raw task file per plan workstream into 00_tasks/.
+      description: Write one raw task file per approved workstream into 00_tasks/.
       tool: harness:claude-code
       depends_on: [seed_project_md]
       retries: 2
@@ -88,25 +88,26 @@ tasks:
         kebab-case slug). The improver drains this folder in filename order,
         so the numbering preserves workstream order.
 
+        Preserve the approved workstreams exactly. Never merge or split them.
+
         Each file is plain markdown, NO front-matter, under 40 lines:
 
         # <Workstream N title from Plan.md>
 
-        <2-6 sentences: what this workstream delivers, distilled from the
-        plan - objective, the components it touches, constraints that bind
-        it.>
+        <2-6 sentences covering the result, who uses it, the components it
+        touches and its constraints.>
 
         Context:
         - Plan: {{inputs.braindump_dir}}/Plan.md (read it before speccing)
-        - This is workstream N of M ("<title>"). Scaffolding-first ordering.
+        - This is workstream N of M ("<title>").
 
         Acceptance:
         - <bullets derived from the Plan.md Success Criteria this workstream
           serves>
 
-        The line "This is workstream N of M" must appear verbatim in every
-        file - a later step recovers task priority from it after the
-        improver rewrites filenames.
+        Keep the wording "This is workstream N of M" in every file, replacing
+        N and M with the actual numbers (e.g. "This is workstream 1 of 2").
+        A later step recovers task priority from it after filenames change.
 
         End your response with the list of files written and then exactly:
         tasks_written: <number of files>

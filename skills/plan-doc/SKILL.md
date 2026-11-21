@@ -56,9 +56,14 @@ Then these sections, in this order:
    schema definitions, or file layouts; each workstream's own spec decides
    those later.
 4. `# Workstreams & Priorities` — an ordered, numbered list. Each workstream
-   becomes exactly one task downstream, so slice them as independently
-   shippable chunks. Scaffolding/setup comes first when the project is new.
-   Each entry: a short title plus 1-3 sentences of what it delivers.
+   becomes one card for a result one agent can deliver with its skills.
+   Give it a short title and 1-3 sentences on who can use the result and
+   how to check it.
+   Fold setup into the first working path unless the scaffold has its own
+   consumer. A one-command CLI gets one card, accepted by running the command
+   from a clean checkout. For each additional workstream, state what the split
+   buys here (fresh context, parallel work, an independent test or review,
+   or a different agent or permissions).
 5. `# Success Criteria` — observable behaviors a reviewer can exercise on the
    running application. "The health endpoint returns 200", not "the code is
    clean".

@@ -131,7 +131,14 @@ in place.
   `report.md`).
 - `Plan.md` front-matter declares `needs_process` / `needs_architecture`;
   the plan conduit generates only the diagrams the plan calls for.
-- Task priority equals plan workstream order (scaffolding first). The
+- Each approved workstream gets one card for an independently usable result
+  one agent can deliver and a reviewer can check. Setup belongs in the first
+  working path unless someone uses the scaffold on its own. A one-command
+  CLI gets one card, checked by running the command from a clean checkout.
+  For every extra card, the plan and card name the reason for the split
+  (fresh context, parallel work, an independent test or review, or a
+  different agent or permissions).
+- Task priority equals plan workstream order. The
   improver resets priorities, so the `prioritize` step restores them from
   the "This is workstream N of M" line embedded in each task description.
 
@@ -139,7 +146,7 @@ in place.
 
 - `improve-all-tasks` iterates at most 20 times per invocation, so plans
   with more than 20 workstreams need a second `implement-autonomous-projects`
-  run (realistic plans have 3-10).
+  run.
 - One braindump folder = one project. To run several projects, run the
   pipeline once per folder.
 
