@@ -74,7 +74,7 @@ tasks:
         project_md: written
 
   - generate_tasks:
-      description: Write one raw task file per approved delivery into 00_tasks/.
+      description: Write one raw task file per approved workstream into 00_tasks/.
       tool: harness:claude-code
       depends_on: [seed_project_md]
       retries: 2
@@ -88,20 +88,14 @@ tasks:
         kebab-case slug). The improver drains this folder in filename order,
         so the numbering preserves workstream order.
 
-        Each card covers one independently usable result one agent can deliver
-        with its skills. Include setup in the first working path unless the
-        approved plan names an independent consumer for the scaffold. A
-        one-command CLI takes one card covering setup through running the command.
-        On every additional card, name the concrete reason for the split from
-        the plan (fresh context, parallel work, an independent test or review,
-        or a different agent or permissions).
+        Preserve the approved workstreams exactly. Never merge or split them.
 
         Each file is plain markdown, NO front-matter, under 40 lines:
 
         # <Workstream N title from Plan.md>
 
         <2-6 sentences covering the result, who uses it, the components it
-        touches, its constraints and the reason for a split if applicable.>
+        touches and its constraints.>
 
         Context:
         - Plan: {{inputs.braindump_dir}}/Plan.md (read it before speccing)
